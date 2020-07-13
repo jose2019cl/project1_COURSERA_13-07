@@ -1,0 +1,454 @@
+---
+title: "Untitled"
+author: "JOSE BAEZA DIAZ"
+date: "11-07-2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+
+```{r}
+require(tidyverse)
+require(mice)
+require(lubridate)
+```
+
+
+
+
+Let's unzip the `activity.zip` file with the `unzip` function from `utils` package and read the data file with `read_csv` from `readr` package, producing a *tibble* dataframe.
+
+
+```{r}
+if(file.exists('./activity.zip')) {
+  # Extract Data file
+  unzip('./activity.zip')
+  # Load Data file in tibble dataframe
+  data <- read_csv('activity.csv')
+  # Delete Data file
+  invisible(file.remove('./activity.csv'))
+}
+```
+
+Let's view the data head in knitr kable table format
+
+
+```{r}
+knitr::kable(head(data), 
+             col.names = str_to_title(names(data))) # capitular colnames format
+```
+
+
+
+| Steps|Date       | Interval|
+|-----:|:----------|--------:|
+|    NA|2012-10-01 |        0|
+|    NA|2012-10-01 |        5|
+|    NA|2012-10-01 |       10|
+|    NA|2012-10-01 |       15|
+|    NA|2012-10-01 |       20|
+|    NA|2012-10-01 |       25|
+
+
+## What is mean total number of steps taken per day?
+
+Let's look at the histogram of the total number of steps performed daily. But, let's replace the count on the y-axis with the density values and thus plot the density kernel as well.
+
+
+```{r}
+data %>%
+  group_by(date) %>%
+  summarise(sm = sum(steps)) %>%
+  ggplot(aes(x = sm)) +
+  geom_histogram(aes(y = ..density..), binwidth = 1800, 
+                 color = "black", fill = "white") +
+  geom_density(alpha = 0.2, fill = "#FF6666") +
+  theme_bw() + labs(title = 'Histogram of the total number of steps daily', subtitle = 'With estimated Kernel Density Curve') + xlab('Steps') + ylab('Density') 
+```
+
+![](PA1_template_files/figure-html/unnamed-chunk-4-1.png)<!-- -->
+
+Let's look at the mean and median of the total number of steps performed daily.
+
+
+```{r}
+data %>%
+  group_by(date) %>%
+  summarise(sm = sum(steps)) %>%
+  ungroup() %>%
+  summarise(Mean = mean(sm, na.rm = T),
+            Median = median(sm, na.rm = T))
+```
+
+```{r}
+## # A tibble: 1 x 2
+##     Mean Median
+##    <dbl>  <dbl>
+## 1 10766.  10765
+```
+
+
+## What is the average daily activity pattern?
+
+Let's look at the time series plot of the average number of steps per 5-minute interval
+
+
+```{r}
+data %>%
+  group_by(interval) %>%
+  summarise(sm = mean(steps, na.rm = T)) %>%
+  ggplot(aes(interval, sm)) +
+  labs(title = 'Average Number of Steps Daily by Interval') +
+  ylab('Number of Steps') + xlab('Interval') +
+  geom_line(col = "#00AFBB", size = 1.4) + theme_bw()
+```
+
+![](PA1_template_files/figure-html/unnamed-chunk-6-1.png)<!-- -->
+
+Let's find out which 5 minute interval has the highest average daily steps *sm* (step mean)
+
+
+```{r}
+data %>%
+  group_by(interval) %>%
+  summarise(interval, sm = mean(steps, na.rm = T)) %>%
+  ungroup() %>%
+  dplyr::filter(sm == max(sm, na.rm = T)) %>%
+  distinct()
+```
+
+```{r}
+## # A tibble: 1 x 2
+##   interval    sm
+##      <dbl> <dbl>
+## 1      835  206.
+```
+
+
+## Imputing missing values
+
+We have several lines with missing values (NA), let's check the count of these values by row
+
+
+```{r}
+data %>%
+  summarise(na_count = sum(!complete.cases(.)))
+```
+
+```
+## # A tibble: 1 x 1
+##   na_count
+##      <int>
+## 1     2304
+```
+
+One strategy that we can use is that of imputation by MICE (Multiple Imputation by Chained Equations), basically it tries to interactively predict each missing value by means of a regression. The figure below exemplifies the process
+
+![figure credits: https://www.youtube.com/watch?v=zX-pacwVyvU](https://i.ytimg.com/vi/zX-pacwVyvU/maxresdefault.jpg)
+
+Let's impute the missing data with the mice function and
+create a new dataframe `data_imputed` that will have the new data.
+
+
+
+```{r}
+temp_data <- mice(data, m = 50, meth = 'pmm', # 50 datasets and predictive mean method
+                  seed = 500, printFlag = F) 
+data_imputed <- complete(temp_data, 1)
+```
+
+After imputing the data we will see the histogram of the data before and after imputation
+
+
+```{r}
+data %>%
+  mutate(Status = rep_along(steps, 'Non-imputed')) %>%
+  bind_rows(., data_imputed %>%
+              mutate(Status = rep_along(steps, 'Imputed'))) %>%
+  group_by(Status, date) %>%
+  summarise(Status, date, sm = sum(steps)) %>%
+  ggplot(aes(x = sm)) +
+  geom_histogram(aes(color = Status, fill = Status), 
+                 alpha = 0.3, position = "identity", 
+                 binwidth = 1800) +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800")) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  theme_bw() + 
+  labs(title = 'Histogram of the total number of steps daily',
+       subtitle = 'After/Before MICE Imputation') +
+  xlab('Steps') + ylab('Frequency') 
+```
+
+![](PA1_template_files/figure-html/unnamed-chunk-10-1.png)<!-- -->
+
+It seems that there were not many changes in the appearance of the histograms, we had a higher concentration of data imputed in the middle area.
+
+Let's check the mean and median statistics
+
+
+```{r}
+data %>%
+  mutate(Status = rep_along(steps, 'Non-imputed')) %>%
+  bind_rows(., data_imputed %>%
+              mutate(Status = rep_along(steps, 'Imputed'))) %>%
+  group_by(Status, date) %>%
+  summarise(sm = sum(steps)) %>%
+  summarise(Status, Mean = mean(sm, na.rm = T),
+            Median = median(sm, na.rm = T)) %>%
+  distinct()
+```
+
+```
+## # A tibble: 2 x 3
+## # Groups:   Status [2]
+##   Status        Mean Median
+##   <chr>        <dbl>  <dbl>
+## 1 Imputed     10849.  11015
+## 2 Non-imputed 10766.  10765
+```
+
+It is notable that the imputation shifted the mean and median of the original data to the right. However, we can actually visually perceive the impact of imputation on the estimation of the total number of steps through a boxplot graph.
+
+
+```{r}
+data %>%
+  mutate(Status = rep_along(steps, 'Non-imputed')) %>%
+  bind_rows(., data_imputed %>%
+              mutate(Status = rep_along(steps, 'Imputed'))) %>%
+  group_by(Status, date) %>%
+  summarise(Status, date, sm = sum(steps)) %>%
+  ggplot(aes(y = sm, x = Status)) +
+  geom_boxplot(aes(fill = Status)) +
+  labs(title = 'Boxplot of the total number of steps daily',
+       subtitle = 'After/Before MICE Imputation') +
+  xlab('') + ylab('Frequency') + theme_bw()
+```
+
+![](PA1_template_files/figure-html/unnamed-chunk-12-1.png)<!-- -->
+
+Note how the data variability became smaller after imputation  (size of the box)  and there was a slight increase in the median value (line inside the box). 
+
+Imputation positively affects the mean estimate (increases the mean) and reduces the variability of the data... This can be a problem because, if the imputation is wrong, the reduced variability provides very narrow confidence intervals with a biased estimated mean.
+
+## Are there differences in activity patterns between weekdays and weekends?
+
+Let's look at the graph of the intervals every 5 min daily and the average number of steps per weekday and weekends
+
+
+```{r}
+data_imputed %>%
+  mutate(dayw = if_else(wday(date) %in% c(1,7), # create factor variable
+                        "Weekend", "Weekday")) %>%
+  group_by(interval, dayw) %>%
+  summarise(dayw, interval, sm = mean(steps, na.rm = T)) %>% 
+  ggplot(aes(interval, sm)) +
+  labs(title = 'Average Number of Steps Daily by Interval',
+       subtitle = 'Segmented by weekday and weekend') +
+  ylab('Number of Steps') + xlab('Interval') +
+  geom_line(col = "#00AFBB", size = 1.4) + 
+  facet_wrap(~dayw, ncol = 1) + theme_bw()
+```
+
+![](PA1_template_files/figure-html/unnamed-chunk-13-1.png)<!-- -->
+
+ BIN +9.41 KB PA1_template_files/figure-html/unnamed-chunk-10-1.png 
+Binary file not shown.
+ BIN +5.77 KB PA1_template_files/figure-html/unnamed-chunk-11-1.png 
+Binary file not shown.
+ BIN +5.77 KB PA1_template_files/figure-html/unnamed-chunk-12-1.png 
+Binary file not shown.
+ BIN +40.2 KB PA1_template_files/figure-html/unnamed-chunk-13-1.png 
+Binary file not shown.
+ BIN +17.4 KB PA1_template_files/figure-html/unnamed-chunk-3-1.png 
+Binary file not shown.
+ BIN +17.4 KB PA1_template_files/figure-html/unnamed-chunk-4-1.png 
+Binary file not shown.
+ BIN +27.7 KB PA1_template_files/figure-html/unnamed-chunk-5-1.png 
+Binary file not shown.
+ BIN +27.7 KB PA1_template_files/figure-html/unnamed-chunk-6-1.png 
+Binary file not shown.
+ BIN +9.41 KB PA1_template_files/figure-html/unnamed-chunk-9-1.png 
+Binary file not shown.
+ BIN +19.8 KB PA1_template_files/fonts/open-sans-400.woff 
+Binary file not shown.
+ BIN +20.5 KB PA1_template_files/fonts/open-sans-700.woff 
+Binary file not shown.
+ BIN +3.11 KB PA1_template_files/images/body-bg.jpg 
+Binary file not shown.
+ BIN +8.65 KB PA1_template_files/images/body-bg.png 
+Binary file not shown.
+ BIN +10.2 KB PA1_template_files/images/header-bg.jpg 
+Binary file not shown.
+ BIN +33.4 KB PA1_template_files/images/highlight-bg.jpg 
+Binary file not shown.
+ 10  PA1_template_files/style.css 
+ 168  README.md 
+@@ -0,0 +1,168 @@
+## Introduction
+
+It is now possible to collect a large amount of data about personal
+movement using activity monitoring devices such as a
+[Fitbit](http://www.fitbit.com), [Nike
+Fuelband](http://www.nike.com/us/en_us/c/nikeplus-fuelband), or
+[Jawbone Up](https://jawbone.com/up). These type of devices are part of
+the "quantified self" movement -- a group of enthusiasts who take
+measurements about themselves regularly to improve their health, to
+find patterns in their behavior, or because they are tech geeks. But
+these data remain under-utilized both because the raw data are hard to
+obtain and there is a lack of statistical methods and software for
+processing and interpreting the data.
+
+This assignment makes use of data from a personal activity monitoring
+device. This device collects data at 5 minute intervals through out the
+day. The data consists of two months of data from an anonymous
+individual collected during the months of October and November, 2012
+and include the number of steps taken in 5 minute intervals each day.
+
+## Data
+
+The data for this assignment can be downloaded from the course web
+site:
+
+* Dataset: [Activity monitoring data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip) [52K]
+
+The variables included in this dataset are:
+
+* **steps**: Number of steps taking in a 5-minute interval (missing
+    values are coded as `NA`)
+
+* **date**: The date on which the measurement was taken in YYYY-MM-DD
+    format
+
+* **interval**: Identifier for the 5-minute interval in which
+    measurement was taken
+
+
+
+
+The dataset is stored in a comma-separated-value (CSV) file and there
+are a total of 17,568 observations in this
+dataset.
+
+
+## Assignment
+
+This assignment will be described in multiple parts. You will need to
+write a report that answers the questions detailed below. Ultimately,
+you will need to complete the entire assignment in a **single R
+markdown** document that can be processed by **knitr** and be
+transformed into an HTML file.
+
+Throughout your report make sure you always include the code that you
+used to generate the output you present. When writing code chunks in
+the R markdown document, always use `echo = TRUE` so that someone else
+will be able to read the code. **This assignment will be evaluated via
+peer assessment so it is essential that your peer evaluators be able
+to review the code for your analysis**.
+
+For the plotting aspects of this assignment, feel free to use any
+plotting system in R (i.e., base, lattice, ggplot2)
+
+Fork/clone the [GitHub repository created for this
+assignment](http://github.com/rdpeng/RepData_PeerAssessment1). You
+will submit this assignment by pushing your completed files into your
+forked repository on GitHub. The assignment submission will consist of
+the URL to your GitHub repository and the SHA-1 commit ID for your
+repository state.
+
+NOTE: The GitHub repository also contains the dataset for the
+assignment so you do not have to download the data separately.
+
+
+
+### Loading and preprocessing the data
+
+Show any code that is needed to
+
+1. Load the data (i.e. `read.csv()`)
+
+2. Process/transform the data (if necessary) into a format suitable for your analysis
+
+
+### What is mean total number of steps taken per day?
+
+For this part of the assignment, you can ignore the missing values in
+the dataset.
+
+1. Make a histogram of the total number of steps taken each day
+
+2. Calculate and report the **mean** and **median** total number of steps taken per day
+
+
+### What is the average daily activity pattern?
+
+1. Make a time series plot (i.e. `type = "l"`) of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all days (y-axis)
+
+2. Which 5-minute interval, on average across all the days in the dataset, contains the maximum number of steps?
+
+
+### Imputing missing values
+
+Note that there are a number of days/intervals where there are missing
+values (coded as `NA`). The presence of missing days may introduce
+bias into some calculations or summaries of the data.
+
+1. Calculate and report the total number of missing values in the dataset (i.e. the total number of rows with `NA`s)
+
+2. Devise a strategy for filling in all of the missing values in the dataset. The strategy does not need to be sophisticated. For example, you could use the mean/median for that day, or the mean for that 5-minute interval, etc.
+
+3. Create a new dataset that is equal to the original dataset but with the missing data filled in.
+
+4. Make a histogram of the total number of steps taken each day and Calculate and report the **mean** and **median** total number of steps taken per day. Do these values differ from the estimates from the first part of the assignment? What is the impact of imputing missing data on the estimates of the total daily number of steps?
+
+
+### Are there differences in activity patterns between weekdays and weekends?
+
+For this part the `weekdays()` function may be of some help here. Use
+the dataset with the filled-in missing values for this part.
+
+1. Create a new factor variable in the dataset with two levels -- "weekday" and "weekend" indicating whether a given date is a weekday or weekend day.
+
+1. Make a panel plot containing a time series plot (i.e. `type = "l"`) of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all weekday days or weekend days (y-axis). The plot should look something like the following, which was created using **simulated data**:
+
+![Sample panel plot](instructions_fig/sample_panelplot.png) 
+
+
+**Your plot will look different from the one above** because you will
+be using the activity monitor data. Note that the above plot was made
+using the lattice system but you can make the same version of the plot
+using any plotting system you choose.
+
+
+## Submitting the Assignment
+
+To submit the assignment:
+
+1. Commit your completed `PA1_template.Rmd` file to the `master` branch of your git repository (you should already be on the `master` branch unless you created new ones)
+
+2. Commit your `PA1_template.md` and `PA1_template.html` files produced by processing your R markdown file with the `knit2html()` function in R (from the **knitr** package)
+
+3. If your document has figures included (it should) then they should have been placed in the `figure/` directory by default (unless you overrode the default). Add and commit the `figure/` directory to your git repository.
+
+4. Push your `master` branch to GitHub.
+
+5. Submit the URL to your GitHub repository for this assignment on the course web site.
+
+In addition to submitting the URL for your GitHub repository, you will
+need to submit the 40 character SHA-1 hash (as string of numbers from
+0-9 and letters from a-f) that identifies the repository commit that
+contains the version of the files you want to submit. You can do this
+in GitHub by doing the following:
+
+1. Go into your GitHub repository web page for this assignment
+
+2. Click on the "?? commits" link where ?? is the number of commits you have in the repository. For example, if you made a total of 10 commits to this repository, the link should say "10 commits".
+
+3. You will see a list of commits that you have made to this repository. The most recent commit is at the very top. If this represents the version of the files you want to submit, then just click the "copy to clipboard" button on the right hand side that should appear when you hover over the SHA-1 hash. Paste this SHA-1 hash into the course web site when you submit your assignment. If you don't want to use the most recent commit, then go down and find the commit you want and copy the SHA-1 hash.
+
